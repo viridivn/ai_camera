@@ -20,8 +20,11 @@ DEPS_ARM = $(OBJS_ARM:.o=.d)
 OBJS_HOST = $(patsubst src/%.c, $(BUILD_DIR)/host/obj/%.o, $(SRCS))
 DEPS_HOST = $(OBJS_HOST:.o=.d)
 
+VERSION ?= 0.1.0
+GIT_VER = $(shell git describe --tags --always --dirty 2>/dev/null || echo "v$(VERSION)")
+
 # Compiler flags
-COMMON_CFLAGS = -O3 -Wall -Wextra -Isrc -D_GNU_SOURCE -MMD -MP
+COMMON_CFLAGS = -O3 -Wall -Wextra -Isrc -D_GNU_SOURCE -DAPP_VERSION=\"$(VERSION)\" -DGIT_VERSION=\"$(GIT_VER)\" -MMD -MP
 
 # ------------------------------------------------------------------------------
 # ARM Cross-Compilation Configuration

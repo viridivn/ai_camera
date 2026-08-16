@@ -10,6 +10,14 @@
 #include "http_server.h"
 #include "uds_ipc.h"
 
+#ifndef APP_VERSION
+#define APP_VERSION "0.1.0"
+#endif
+
+#ifndef GIT_VERSION
+#define GIT_VERSION "v0.1.0"
+#endif
+
 static volatile int keep_running = 1;
 
 static void sig_handler(int signo) {
@@ -22,7 +30,7 @@ static void sig_handler(int signo) {
 #include "timelapse_encoder.h"
 
 static void print_usage(const char *prog_name) {
-    printf("ai_camera - replacement for eleegoo stock camera service\n\n");
+    printf("ai_camera %s (%s) - lightweight camera & timelapse service\n\n", APP_VERSION, GIT_VERSION);
     printf("Usage: %s [options]\n", prog_name);
     printf("Options:\n");
     printf("  -d, --device PATH          V4L2 camera device path (default: /dev/video0)\n");
@@ -36,6 +44,7 @@ static void print_usage(const char *prog_name) {
     printf("  -S, --snapshot PATH        (for testing) Capture a single frame to PATH and exit\n");
     printf("  -E, --encode-timelapse DIR (for testing) Encode directory of JPEGs to MP4 and exit\n");
     printf("  -o, --output PATH          Output MP4 file path for timelapse encoding\n");
+    printf("  -v, --version              Display version information and exit\n");
     printf("      --help                 Display this message and exit\n");
 }
 
@@ -64,12 +73,13 @@ int main(int argc, char **argv) {
         {"snapshot", required_argument, 0, 'S'},
         {"encode-timelapse", required_argument, 0, 'E'},
         {"output", required_argument, 0, 'o'},
+        {"version", no_argument, 0, 'v'},
         {"help", no_argument, 0, '?'},
         {0, 0, 0, 0}
     };
 
     int opt;
-    while ((opt = getopt_long(argc, argv, "d:w:h:r:q:p:s:f:S:E:o:?", long_options, NULL)) != -1) {
+    while ((opt = getopt_long(argc, argv, "d:w:h:r:q:p:s:f:S:E:o:v?", long_options, NULL)) != -1) {
         switch (opt) {
             case 'd': snprintf(device_path, sizeof(device_path), "%s", optarg); break;
             case 'w': width = atoi(optarg); break;
@@ -81,6 +91,9 @@ int main(int argc, char **argv) {
             case 'S': snprintf(snapshot_path, sizeof(snapshot_path), "%s", optarg); break;
             case 'E': snprintf(encode_dir, sizeof(encode_dir), "%s", optarg); break;
             case 'o': snprintf(output_mp4, sizeof(output_mp4), "%s", optarg); break;
+            case 'v':
+                printf("ai_camera %s (%s)\n", APP_VERSION, GIT_VERSION);
+                return 0;
             case 'f':
                 if (strcasecmp(optarg, "MJPEG") == 0 || strcasecmp(optarg, "JPG") == 0) {
                     format = V4L2_PIX_FMT_MJPEG;
@@ -154,7 +167,7 @@ int main(int argc, char **argv) {
         return 0;
     }
 
-    printf("Starting camera service\n");
+    printf("Starting ai_camera v%s (%s)\n", APP_VERSION, GIT_VERSION);
     printf("Device: %s (%dx%d, format: %s)\n", device_path, camera.width, camera.height,
            camera.pixelformat == V4L2_PIX_FMT_H264 ? "H264" : "MJPEG");
     printf("HTTP Port: %d\n", http_port);
