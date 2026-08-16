@@ -1,0 +1,35 @@
+# Binaries and executables
+ai_camera
+ai_camera_native
+
+# Object files and dependencies
+*.o
+*.o.d
+*.d
+*.a
+*.so
+*.dylib
+*.dll
+
+# Toolchain and temporary builds
+toolchain/
+build/
+bin/
+
+# Core dumps and logs
+core
+core.*
+vgcore.*
+*.log
+
+# Editor and IDE metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+*.patch
+
+# OS metadata
+.DS_Store
+Thumbs.db
