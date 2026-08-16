@@ -7,27 +7,27 @@ A lightweight replacement for the stock ai_camera service on the Elegoo Centauri
 ## Use
 
 0. **Back up the original ai_camera**:
-   ```bash
+   ```
    root@TinaLinux:~# cp /opt/bin/ai_camera /opt/bin/ai_camera.bak
    ```
 
 1. **Compile**:
-   ```bash
-   [you@host ai_camera]$ make
+   ```
+   you@host:ai_camera$ make
    ```
 
 2. **Stop the printer service**:
-   ```bash
+   ```
    root@TinaLinux:~# /etc/init.d/printer stop
    ```
 
 3. **Copy executable to printer**:
-   ```bash
-   [you@host ai_camera]$ scp ai_camera root@[IP_ADDRESS]:/opt/bin/ai_camera
+   ```
+   you@host:ai_camera$ scp ai_camera root@[IP_ADDRESS]:/opt/bin/ai_camera
    ```
 
 4. **Reboot printer**:
-   ```bash
+   ```
    root@TinaLinux:~# reboot
    ```
 
