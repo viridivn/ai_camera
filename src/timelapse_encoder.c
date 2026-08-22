@@ -300,7 +300,12 @@ typedef struct {
     void *user_data;
 } async_encode_args_t;
 
+#include <sys/resource.h>
+
 static void *async_encode_worker(void *arg) {
+    // Avoid taking priority over printer processes
+    setpriority(PRIO_PROCESS, 0, 19);
+
     async_encode_args_t *args = (async_encode_args_t *)arg;
     int res = timelapse_encode_directory(args->image_dir, args->output_mp4, args->fps, 0, 0,
                                          args->prog_cb, args->user_data);

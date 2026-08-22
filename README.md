@@ -35,7 +35,6 @@ A lightweight replacement for the stock ai_camera service on the Elegoo Centauri
 
 ## Open issues
 
-- Timelapses might appear on the touchscreen UI but not in any web UIs. I do not know why this happens.
 - All "AI" functionality is removed. This is intentional.
 - Needs more stress testing
 - Unknown if higher resolutions can overwhelm the USB bus

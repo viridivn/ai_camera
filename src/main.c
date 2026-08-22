@@ -41,6 +41,8 @@ static void print_usage(const char *prog_name) {
     printf("  -p, --port INT             HTTP stream port (default: 8080)\n");
     printf("  -s, --socket PATH          UDS IPC socket path (default: /tmp/aicamera_uds)\n");
     printf("  -f, --format STR           Format: H264 or MJPEG (default: MJPEG)\n");
+    printf("      --no-auto-composite    Disable automatic background MP4 encoding on print stop\n");
+    printf("      --cleanup              Encode uncompressed timelapses, sync database records, and exit\n");
     printf("  -S, --snapshot PATH        (for testing) Capture a single frame to PATH and exit\n");
     printf("  -E, --encode-timelapse DIR (for testing) Encode directory of JPEGs to MP4 and exit\n");
     printf("  -o, --output PATH          Output MP4 file path for timelapse encoding\n");
@@ -55,6 +57,8 @@ int main(int argc, char **argv) {
     int fps = 0;
     int quality = 0;
     int http_port = 8080;
+    int auto_composite = 1;
+    int cleanup_mode = 0;
     char socket_path[128] = "/tmp/aicamera_uds";
     char snapshot_path[256] = {0};
     char encode_dir[256] = {0};
@@ -70,6 +74,8 @@ int main(int argc, char **argv) {
         {"port", required_argument, 0, 'p'},
         {"socket", required_argument, 0, 's'},
         {"format", required_argument, 0, 'f'},
+        {"no-auto-composite", no_argument, 0, 1001},
+        {"cleanup", no_argument, 0, 1002},
         {"snapshot", required_argument, 0, 'S'},
         {"encode-timelapse", required_argument, 0, 'E'},
         {"output", required_argument, 0, 'o'},
@@ -88,6 +94,8 @@ int main(int argc, char **argv) {
             case 'q': quality = atoi(optarg); break;
             case 'p': http_port = atoi(optarg); break;
             case 's': snprintf(socket_path, sizeof(socket_path), "%s", optarg); break;
+            case 1001: auto_composite = 0; break;
+            case 1002: cleanup_mode = 1; break;
             case 'S': snprintf(snapshot_path, sizeof(snapshot_path), "%s", optarg); break;
             case 'E': snprintf(encode_dir, sizeof(encode_dir), "%s", optarg); break;
             case 'o': snprintf(output_mp4, sizeof(output_mp4), "%s", optarg); break;
@@ -106,6 +114,10 @@ int main(int argc, char **argv) {
                 print_usage(argv[0]);
                 return (opt == '?') ? 0 : 1;
         }
+    }
+
+    if (cleanup_mode) {
+        return uds_ipc_sync_all_timelapses(socket_path);
     }
 
     // Direct standalone timelapse encoding mode (-E / --encode-timelapse)
@@ -179,7 +191,7 @@ int main(int argc, char **argv) {
     }
 
     uds_ipc_t uds;
-    if (uds_ipc_init(&uds, socket_path, &ring) == 0) {
+    if (uds_ipc_init(&uds, socket_path, &ring, auto_composite) == 0) {
         uds_ipc_start(&uds);
     }
 

@@ -22,11 +22,13 @@ typedef struct {
     char current_lapse_filename[128];
     char current_lapse_videoname[128];
     int current_frame_index;
+    int auto_composite;
 } uds_ipc_t;
 
-int uds_ipc_init(uds_ipc_t *ipc, const char *path, frame_ring_t *ring);
+int uds_ipc_init(uds_ipc_t *ipc, const char *path, frame_ring_t *ring, int auto_composite);
 int uds_ipc_start(uds_ipc_t *ipc);
 void uds_ipc_stop(uds_ipc_t *ipc);
 void uds_ipc_broadcast(uds_ipc_t *ipc, const char *msg);
+int uds_ipc_sync_all_timelapses(const char *socket_path);
 
 #endif // UDS_IPC_H

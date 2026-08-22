@@ -253,6 +253,32 @@ static void process_ipc_message(uds_ipc_t *ipc, int client_fd, const char *msg) 
                                "{\"id\":%s,\"method\":\"time_lapse\",\"result\":\"ok\",\"status\":\"TimeLapseStop\",\"video_duration\":%d,\"video_name\":\"%s\",\"video_path\":\"%s\"}\n",
                                id[0] ? id : "null", duration, ipc->current_lapse_filename, ipc->current_lapse_dir);
             send(client_fd, response, len, MSG_NOSIGNAL);
+
+            if (ipc->auto_composite && ipc->current_frame_index > 0 && ipc->current_lapse_filename[0]) {
+                composite_callback_ctx_t *ctx = malloc(sizeof(*ctx));
+                if (ctx) {
+                    ctx->ipc = ipc;
+                    snprintf(ctx->target_dir, sizeof(ctx->target_dir), "%s", ipc->current_lapse_dir);
+                    snprintf(ctx->out_video, sizeof(ctx->out_video), "/opt/usr/video/%s.mp4", ipc->current_lapse_filename);
+
+                    char out_copy[256];
+                    snprintf(out_copy, sizeof(out_copy), "%s", ctx->out_video);
+                    char *base_name = basename(out_copy);
+
+                    printf("[uds_ipc] Auto-encoding timelapse on stop: '%s' -> '%s' (nice 19)\n",
+                           ctx->target_dir, ctx->out_video);
+
+                    char start_report[512];
+                    snprintf(start_report, sizeof(start_report),
+                             "{\"id\":-1,\"method\":\"status_report\",\"result\":{\"level\":\"info\",\"message\":\"Time-Lapse Composite Video Start\",\"video_name\":\"%s\"}}\n",
+                             base_name);
+                    uds_ipc_broadcast(ipc, start_report);
+
+                    timelapse_encode_directory_async(ctx->target_dir, ctx->out_video, 15,
+                                                     on_composite_progress, on_composite_finish, ctx);
+                }
+            }
+
             return;
         }
     } else if (strcasecmp(method, "composite_video") == 0 || strcasecmp(method, "TimeLapseComposite") == 0) {
@@ -296,21 +322,42 @@ static void process_ipc_message(uds_ipc_t *ipc, int client_fd, const char *msg) 
                 strncat(ctx->out_video, ".mp4", sizeof(ctx->out_video) - strlen(ctx->out_video) - 1);
             }
 
-            printf("[uds_ipc] Triggering timelapse video composite: '%s' -> '%s' @ %d fps\n",
-                   ctx->target_dir, ctx->out_video, fps);
-
             char out_copy[256];
             snprintf(out_copy, sizeof(out_copy), "%s", ctx->out_video);
             char *base_name = basename(out_copy);
 
-            char start_report[512];
-            snprintf(start_report, sizeof(start_report),
-                     "{\"id\":-1,\"method\":\"status_report\",\"result\":{\"level\":\"info\",\"message\":\"Time-Lapse Composite Video Start\",\"video_name\":\"%s\"}}\n",
-                     base_name);
-            uds_ipc_broadcast(ipc, start_report);
+            struct stat st_video;
+            if (stat(ctx->out_video, &st_video) == 0 && st_video.st_size > 0) {
+                // Video is already synthesized on disk (e.g. user exporting an existing MP4 to USB/storage)
+                printf("[uds_ipc] Video '%s' already exists (%lld bytes), reporting ready for export\n",
+                       ctx->out_video, (long long)st_video.st_size);
 
-            timelapse_encode_directory_async(ctx->target_dir, ctx->out_video, fps,
-                                             on_composite_progress, on_composite_finish, ctx);
+                char start_report[512];
+                snprintf(start_report, sizeof(start_report),
+                         "{\"id\":-1,\"method\":\"status_report\",\"result\":{\"level\":\"info\",\"message\":\"Time-Lapse Composite Video Start\",\"video_name\":\"%s\"}}\n",
+                         base_name);
+                uds_ipc_broadcast(ipc, start_report);
+
+                char finish_report[512];
+                snprintf(finish_report, sizeof(finish_report),
+                         "{\"id\":-1,\"method\":\"status_report\",\"result\":{\"level\":\"info\",\"message\":\"Time-Lapse Composite Video Finish\",\"video_name\":\"%s\",\"video_path\":\"%s\",\"video_size\":%lld}}\n",
+                         base_name, ctx->out_video, (long long)st_video.st_size);
+                uds_ipc_broadcast(ipc, finish_report);
+
+                free(ctx);
+            } else {
+                printf("[uds_ipc] Triggering timelapse video composite: '%s' -> '%s' @ %d fps\n",
+                       ctx->target_dir, ctx->out_video, fps);
+
+                char start_report[512];
+                snprintf(start_report, sizeof(start_report),
+                         "{\"id\":-1,\"method\":\"status_report\",\"result\":{\"level\":\"info\",\"message\":\"Time-Lapse Composite Video Start\",\"video_name\":\"%s\"}}\n",
+                         base_name);
+                uds_ipc_broadcast(ipc, start_report);
+
+                timelapse_encode_directory_async(ctx->target_dir, ctx->out_video, fps,
+                                                 on_composite_progress, on_composite_finish, ctx);
+            }
         }
         snprintf(status_str, sizeof(status_str), "Composite_video");
     } else if (strcasecmp(method, "TimeLapseSavePicture") == 0) {
@@ -456,11 +503,12 @@ static void *uds_accept_thread_proc(void *arg) {
     return NULL;
 }
 
-int uds_ipc_init(uds_ipc_t *ipc, const char *path, frame_ring_t *ring) {
+int uds_ipc_init(uds_ipc_t *ipc, const char *path, frame_ring_t *ring, int auto_composite) {
     memset(ipc, 0, sizeof(*ipc));
     snprintf(ipc->socket_path, sizeof(ipc->socket_path), "%s", path ? path : "/tmp/aicamera_uds");
     ipc->server_fd = -1;
     ipc->ring = ring;
+    ipc->auto_composite = auto_composite;
 
     pthread_mutex_init(&ipc->client_lock, NULL);
     for (int i = 0; i < MAX_IPC_CLIENTS; i++) {
@@ -496,7 +544,8 @@ int uds_ipc_init(uds_ipc_t *ipc, const char *path, frame_ring_t *ring) {
         return -1;
     }
 
-    printf("[uds_ipc] UDS IPC server initialized at %s\n", ipc->socket_path);
+    printf("[uds_ipc] UDS IPC server initialized at %s (auto_composite=%d)\n",
+           ipc->socket_path, ipc->auto_composite);
     return 0;
 }
 
@@ -536,4 +585,94 @@ void uds_ipc_stop(uds_ipc_t *ipc) {
     pthread_mutex_destroy(&ipc->client_lock);
 
     printf("[uds_ipc] UDS IPC server stopped\n");
+}
+
+#include <dirent.h>
+
+int uds_ipc_sync_all_timelapses(const char *socket_path) {
+    printf("[sync] Scanning /opt/usr/picture for unencoded timelapses...\n");
+
+    // Scan /opt/usr/picture/ for unencoded image directories and encode them
+    DIR *d = opendir("/opt/usr/picture");
+    if (d) {
+        struct dirent *ent;
+        while ((ent = readdir(d)) != NULL) {
+            if (ent->d_name[0] == '.') continue;
+            char pic_dir[512];
+            snprintf(pic_dir, sizeof(pic_dir), "/opt/usr/picture/%s", ent->d_name);
+            struct stat st;
+            if (stat(pic_dir, &st) == 0 && S_ISDIR(st.st_mode)) {
+                char clean_name[256];
+                snprintf(clean_name, sizeof(clean_name), "%s", ent->d_name);
+                char *temp_sfx = strstr(clean_name, ".temp");
+                if (temp_sfx) *temp_sfx = '\0';
+
+                char out_mp4[512];
+                snprintf(out_mp4, sizeof(out_mp4), "/opt/usr/video/%s.mp4", clean_name);
+
+                struct stat st_v;
+                if (stat(out_mp4, &st_v) != 0 || st_v.st_size == 0) {
+                    printf("[sync] Encoding timelapse directory: '%s' -> '%s'\n", pic_dir, out_mp4);
+                    int res = timelapse_encode_directory(pic_dir, out_mp4, 15, 0, 0, NULL, NULL);
+                    if (res == 0) {
+                        printf("[sync] Successfully encoded: '%s'\n", out_mp4);
+                        char rm_cmd[600];
+                        snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", pic_dir);
+                        system(rm_cmd);
+                    } else {
+                        fprintf(stderr, "[sync] Failed to encode: '%s'\n", pic_dir);
+                    }
+                } else {
+                    printf("[sync] Video '%s' already exists, cleaning up redundant picture directory '%s'\n",
+                           out_mp4, pic_dir);
+                    char rm_cmd[600];
+                    snprintf(rm_cmd, sizeof(rm_cmd), "rm -rf \"%s\"", pic_dir);
+                    system(rm_cmd);
+                }
+            }
+        }
+        closedir(d);
+    }
+
+    printf("[sync] Connecting to UDS socket to notify elegoo_printer...\n");
+
+    // Connect to socket to notify elegoo_printer of all videos in /opt/usr/video
+    int sock = socket(AF_UNIX, SOCK_STREAM, 0);
+    if (sock >= 0) {
+        struct sockaddr_un addr;
+        memset(&addr, 0, sizeof(addr));
+        addr.sun_family = AF_UNIX;
+        snprintf(addr.sun_path, sizeof(addr.sun_path), "%s", socket_path ? socket_path : "/tmp/aicamera_uds");
+
+        if (connect(sock, (struct sockaddr *)&addr, sizeof(addr)) == 0) {
+            DIR *vd = opendir("/opt/usr/video");
+            if (vd) {
+                struct dirent *vent;
+                while ((vent = readdir(vd)) != NULL) {
+                    if (strstr(vent->d_name, ".mp4")) {
+                        char vpath[512];
+                        snprintf(vpath, sizeof(vpath), "/opt/usr/video/%s", vent->d_name);
+                        struct stat vst;
+                        if (stat(vpath, &vst) == 0 && vst.st_size > 0) {
+                            char comp_cmd[1024];
+                            snprintf(comp_cmd, sizeof(comp_cmd),
+                                     "{\"id\":8,\"method\":\"composite_video\",\"params\":{\"video_name\":\"%s\"}}\n",
+                                     vent->d_name);
+                            send(sock, comp_cmd, strlen(comp_cmd), MSG_NOSIGNAL);
+                            printf("[sync] Sent update to elegoo_printer for '%s' (%lld bytes)\n",
+                                   vent->d_name, (long long)vst.st_size);
+                            usleep(50000); // 50ms pause between syncs
+                        }
+                    }
+                }
+                closedir(vd);
+            }
+        } else {
+            printf("[sync] Warning: Could not connect to UDS socket at %s (is ai_camera daemon running?)\n", addr.sun_path);
+        }
+        close(sock);
+    }
+
+    printf("[sync] Timelapse synchronization complete.\n");
+    return 0;
 }
