@@ -11,6 +11,7 @@
 #include <sys/socket.h>
 #include <sys/un.h>
 #include <sys/stat.h>
+#include <dirent.h>
 #include <poll.h>
 
 typedef struct {
@@ -219,7 +220,15 @@ static void process_ipc_message(uds_ipc_t *ipc, int client_fd, const char *msg) 
             printf("[uds_ipc] Timelapse session started: dir='%s', symlink='/tmp/pic_link'\n", ipc->current_lapse_dir);
             snprintf(status_str, sizeof(status_str), "TimeLapseStart");
         } else if (is_capture) {
-            int frame_idx = index_str[0] ? atoi(index_str) : ++ipc->current_frame_index;
+            int frame_idx = 0;
+            if (index_str[0]) {
+                frame_idx = atoi(index_str);
+                if (frame_idx >= ipc->current_frame_index) {
+                    ipc->current_frame_index = frame_idx + 1;
+                }
+            } else {
+                frame_idx = ipc->current_frame_index++;
+            }
             char snap_file[300];
             if (filepath[0]) {
                 snprintf(snap_file, sizeof(snap_file), "%s", filepath);
@@ -242,11 +251,25 @@ static void process_ipc_message(uds_ipc_t *ipc, int client_fd, const char *msg) 
             unlink("/tmp/pic_link");
             symlink(ipc->current_lapse_dir, "/tmp/pic_link");
 
-            int duration = (ipc->current_frame_index > 0 ? (ipc->current_frame_index / 15) : 0);
-            if (duration == 0 && ipc->current_frame_index > 0) duration = 1;
+            int frame_count = ipc->current_frame_index;
+            if (frame_count <= 0) {
+                DIR *d = opendir(ipc->current_lapse_dir);
+                if (d) {
+                    struct dirent *ent;
+                    while ((ent = readdir(d)) != NULL) {
+                        if (strstr(ent->d_name, ".jpeg") || strstr(ent->d_name, ".jpg")) {
+                            frame_count++;
+                        }
+                    }
+                    closedir(d);
+                }
+            }
+
+            int duration = (frame_count > 0 ? (frame_count / 15) : 0);
+            if (duration == 0 && frame_count > 0) duration = 1;
 
             printf("[uds_ipc] Timelapse session stopped (captured %d frames in '%s')\n",
-                   ipc->current_frame_index, ipc->current_lapse_dir);
+                   frame_count, ipc->current_lapse_dir);
 
             char response[512];
             int len = snprintf(response, sizeof(response),
@@ -254,7 +277,7 @@ static void process_ipc_message(uds_ipc_t *ipc, int client_fd, const char *msg) 
                                id[0] ? id : "null", duration, ipc->current_lapse_filename, ipc->current_lapse_dir);
             send(client_fd, response, len, MSG_NOSIGNAL);
 
-            if (ipc->auto_composite && ipc->current_frame_index > 0 && ipc->current_lapse_filename[0]) {
+            if (ipc->auto_composite && frame_count > 0 && ipc->current_lapse_filename[0]) {
                 composite_callback_ctx_t *ctx = malloc(sizeof(*ctx));
                 if (ctx) {
                     ctx->ipc = ipc;
@@ -586,8 +609,6 @@ void uds_ipc_stop(uds_ipc_t *ipc) {
 
     printf("[uds_ipc] UDS IPC server stopped\n");
 }
-
-#include <dirent.h>
 
 int uds_ipc_sync_all_timelapses(const char *socket_path) {
     printf("[sync] Scanning /opt/usr/picture for unencoded timelapses...\n");
